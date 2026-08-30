@@ -15,23 +15,72 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final supabase = Supabase.instance.client;
   final int _selectedIndex = 0; // Index 0 = Dashboard
 
-  // Fungsi Query Super Aman
-  Future<List<Map<String, dynamic>>> _fetchBookings() async {
+  // State untuk Data, Loading, Pencarian & Filter
+  List<Map<String, dynamic>> _bookings = [];
+  List<Map<String, dynamic>> _filteredBookings = [];
+  bool _isLoading = true;
+  
+  final TextEditingController _searchController = TextEditingController();
+  String _selectedFilter = 'Semua'; // Kategori: Semua, Aktif, Selesai
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchDashboardData();
+    _searchController.addListener(_filterData); 
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  // 1. QUERY SUPABASE (Kembali ke versi "Super Aman" punya lu)
+  Future<void> _fetchDashboardData() async {
+    setState(() => _isLoading = true);
     try {
-      // Kita panggil tabel bookings polos tanpa join, dan urutkan pakai 'start_at'
+      // Kita pakai query polos tanpa join biar data 100% pasti keluar
       final response = await supabase
           .from('bookings')
           .select()
           .order('start_at', ascending: false);
       
-      return List<Map<String, dynamic>>.from(response);
+      setState(() {
+        _bookings = List<Map<String, dynamic>>.from(response);
+        _filteredBookings = _bookings;
+        _isLoading = false;
+      });
     } catch (e) {
       debugPrint('Error fatal Supabase: $e');
-      return [];
+      setState(() => _isLoading = false);
     }
   }
 
-  // Fungsi Navigasi Universal
+  // 2. FUNGSI FILTER & PENCARIAN (Aman dari null)
+  void _filterData() {
+    final query = _searchController.text.toLowerCase();
+    setState(() {
+      _filteredBookings = _bookings.where((item) {
+        // Karena pakai query polos, kita cari berdasarkan UUID / ID-nya
+        final carName = (item['vehicle_id'] ?? '').toString().toLowerCase();
+        final driverName = (item['employee_id'] ?? '').toString().toLowerCase();
+        final destination = (item['destination'] ?? '').toString().toLowerCase();
+        
+        final matchesSearch = carName.contains(query) || driverName.contains(query) || destination.contains(query);
+        final status = item['status'] ?? 'active';
+        
+        if (_selectedFilter == 'Aktif') {
+          return matchesSearch && status != 'Selesai';
+        } else if (_selectedFilter == 'Selesai') {
+          return matchesSearch && status == 'Selesai';
+        }
+        return matchesSearch;
+      }).toList();
+    });
+  }
+
+  // 3. FUNGSI NAVIGASI
   void _onItemTapped(int index) {
     if (index == _selectedIndex) return;
     Widget nextScreen;
@@ -54,74 +103,153 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    int activeCount = _bookings.where((item) => item['status'] != 'Selesai').length;
+    int completedCount = _bookings.where((item) => item['status'] == 'Selesai').length;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       appBar: _buildAppBar(),
       bottomNavigationBar: _buildBottomNavBar(),
-      
-      body: FutureBuilder<List<Map<String, dynamic>>>(
-        future: _fetchBookings(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator(color: Color(0xFFBB0016)));
-          }
-
-          final List<Map<String, dynamic>> bookings = snapshot.data ?? [];
-          
-          // Hitung otomatis (Kecuali statusnya "Selesai", kita anggap aktif)
-          int activeCount = bookings.where((item) => item['status'] != 'Selesai').length;
-          int completedCount = bookings.where((item) => item['status'] == 'Selesai').length;
-
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Dashboard Tim Kantor', style: TextStyle(fontFamily: 'Hanken Grotesk', fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF191C1D))),
-                    Container(width: 40, height: 40, decoration: BoxDecoration(color: const Color(0xFFEDEEEF), borderRadius: BorderRadius.circular(999)), child: IconButton(icon: const Icon(Icons.filter_list, color: Color(0xFF191C1D)), onPressed: () {})),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(child: _buildSummaryCard(true, activeCount.toString())),
-                    const SizedBox(width: 16),
-                    Expanded(child: _buildSummaryCard(false, completedCount.toString())),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Monitoring List', style: TextStyle(fontFamily: 'Hanken Grotesk', fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF191C1D))),
-                    Row(children: const [Text('Lihat Semua', style: TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFBB0016))), SizedBox(width: 4), Icon(Icons.arrow_forward, size: 16, color: Color(0xFFBB0016))]),
-                  ],
-                ),
-                const SizedBox(height: 16),
-
-                if (bookings.isEmpty)
-                  Container(width: double.infinity, padding: const EdgeInsets.all(24), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)), child: const Center(child: Text('Belum ada data peminjaman di database.', style: TextStyle(color: Color(0xFF5C403D)))))
-                else
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: bookings.length,
-                    itemBuilder: (context, index) {
-                      final item = bookings[index];
-                      return _buildListItem(item);
-                    },
+      body: RefreshIndicator(
+        onRefresh: _fetchDashboardData,
+        color: const Color(0xFFBB0016),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header & Tombol Refresh
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Dashboard Tim Kantor', style: TextStyle(fontFamily: 'Hanken Grotesk', fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF191C1D))),
+                  Container(
+                    width: 40, height: 40, 
+                    decoration: BoxDecoration(color: const Color(0xFFEDEEEF), borderRadius: BorderRadius.circular(999)), 
+                    child: IconButton(
+                      icon: const Icon(Icons.refresh, color: Color(0xFF191C1D)), 
+                      onPressed: _fetchDashboardData, 
+                    ),
                   ),
-              ],
-            ),
-          );
-        },
+                ],
+              ),
+              const SizedBox(height: 16),
+              
+              // Kartu Summary
+              Row(
+                children: [
+                  Expanded(child: _buildSummaryCard(true, activeCount.toString())),
+                  const SizedBox(width: 16),
+                  Expanded(child: _buildSummaryCard(false, completedCount.toString())),
+                ],
+              ),
+              const SizedBox(height: 24),
+
+              // Search Bar
+              TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Cari tujuan atau ID...',
+                  hintStyle: const TextStyle(color: Colors.grey, fontSize: 14),
+                  prefixIcon: const Icon(Icons.search, color: Color(0xFF254779)),
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(icon: const Icon(Icons.clear, size: 18), onPressed: () {
+                          _searchController.clear();
+                          FocusScope.of(context).unfocus(); // Tutup keyboard
+                        })
+                      : null,
+                  filled: true,
+                  fillColor: Colors.white,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: Colors.grey.shade200)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFBB0016))),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Filter Chips
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: ['Semua', 'Aktif', 'Selesai'].map((filter) {
+                    bool isSelected = _selectedFilter == filter;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: ChoiceChip(
+                        label: Text(filter),
+                        selected: isSelected,
+                        selectedColor: const Color(0xFF0F3567),
+                        backgroundColor: Colors.white,
+                        labelStyle: TextStyle(
+                          color: isSelected ? Colors.white : Colors.grey.shade700,
+                          fontWeight: FontWeight.bold, fontSize: 12,
+                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: isSelected ? Colors.transparent : Colors.grey.shade300)),
+                        onSelected: (selected) {
+                          setState(() {
+                            _selectedFilter = filter;
+                            _filterData();
+                          });
+                        },
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // Judul Monitoring List
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Monitoring List', style: TextStyle(fontFamily: 'Hanken Grotesk', fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF191C1D))),
+                  Text('${_filteredBookings.length} Data', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey)),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // List View
+              if (_isLoading)
+                const Center(child: Padding(padding: EdgeInsets.all(40.0), child: CircularProgressIndicator(color: Color(0xFFBB0016))))
+              else if (_filteredBookings.isEmpty)
+                Container(
+                  width: double.infinity, padding: const EdgeInsets.all(24), 
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)), 
+                  child: const Center(child: Text('Belum ada data peminjaman.', style: TextStyle(color: Color(0xFF5C403D))))
+                )
+              else
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _filteredBookings.length,
+                  itemBuilder: (context, index) {
+                    final item = _filteredBookings[index];
+                    
+                    // ANIMASI KARTU STAGGERED
+                    return TweenAnimationBuilder(
+                      tween: Tween<double>(begin: 0, end: 1),
+                      duration: Duration(milliseconds: 300 + (index * 100)),
+                      curve: Curves.easeOutCubic,
+                      builder: (context, double value, child) {
+                        return Transform.translate(
+                          offset: Offset(0, 50 * (1 - value)), 
+                          child: Opacity(opacity: value, child: child),
+                        );
+                      },
+                      child: _buildListItem(item),
+                    );
+                  },
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
+  // APP BAR
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
       elevation: 4, shadowColor: Colors.black.withOpacity(0.08), automaticallyImplyLeading: false,
@@ -136,6 +264,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
+  // BOTTOM NAV
   Widget _buildBottomNavBar() {
     return Container(
       decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -2))]),
@@ -153,6 +282,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
+  // SUMMARY CARD
   Widget _buildSummaryCard(bool isActive, String count) {
     return Container(
       padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 1))]), clipBehavior: Clip.antiAlias,
@@ -165,7 +295,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               Row(
                 children: [
                   Container(width: 32, height: 32, decoration: BoxDecoration(color: isActive ? const Color(0xFFBB0016) : const Color(0xFFE1E3E4), shape: BoxShape.circle), child: Icon(isActive ? Icons.directions_car : Icons.check_circle, color: isActive ? Colors.white : const Color(0xFF5C403D), size: 18)),
-                  const SizedBox(width: 8), Expanded(child: Text(isActive ? 'SEDANG DIPINJAM' : 'SELESAI HARI INI', style: const TextStyle(fontFamily: 'Inter', fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF5C403D)))),
+                  const SizedBox(width: 8), Expanded(child: Text(isActive ? 'SEDANG DIPINJAM' : 'SELESAI', style: const TextStyle(fontFamily: 'Inter', fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF5C403D)))),
                 ],
               ),
               const SizedBox(height: 12),
@@ -177,8 +307,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
+  // WIDGET KARTU (Fallback ke format aman)
   Widget _buildListItem(Map<String, dynamic> item) {
-    // Mapping super aman (kalau relasi tabel gagal, ini nggak bakal bikin layar putih/crash)
+    // Balik pakai cara lu yang aman dari error relasi
     final carName = item['vehicle_id'] != null ? 'Mobil: ${item['vehicle_id'].toString().substring(0,5)}...' : 'Mobil Telkom';
     final driverName = item['employee_id'] != null ? 'Driver ID: ${item['employee_id'].toString().substring(0,5)}...' : 'Driver';
     final destination = item['destination'] ?? 'Tujuan Rahasia';
@@ -191,7 +322,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       child: Material(
         color: Colors.transparent, borderRadius: BorderRadius.circular(12),
         child: Opacity(
-          opacity: isActive ? 1.0 : 0.8,
+          opacity: isActive ? 1.0 : 0.8, 
           child: Stack(
             children: [
               Positioned(right: 16, top: 0, bottom: 0, child: Center(child: Icon(Icons.chevron_right, color: const Color(0xFF5C403D).withOpacity(0.5)))),
@@ -203,13 +334,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween, crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(carName, style: const TextStyle(fontFamily: 'Hanken Grotesk', fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF191C1D))),
-                            const SizedBox(height: 4),
-                            Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: const Color(0xFFEDEEEF), borderRadius: BorderRadius.circular(4)), child: const Text('B XXXX XX', style: TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF5C403D)))),
-                          ],
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(carName, style: const TextStyle(fontFamily: 'Hanken Grotesk', fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF191C1D)), maxLines: 1, overflow: TextOverflow.ellipsis),
+                              const SizedBox(height: 4),
+                              Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: const Color(0xFFEDEEEF), borderRadius: BorderRadius.circular(4)), child: const Text('B XXXX XX', style: TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF5C403D)))),
+                            ],
+                          ),
                         ),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(color: isActive ? const Color(0xFFFFC7C1).withOpacity(0.4) : const Color(0xFFE1E3E4), borderRadius: BorderRadius.circular(20)),
@@ -218,9 +351,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ],
                     ),
                     const SizedBox(height: 12), const Divider(height: 1, color: Color(0xFFE1E3E4)), const SizedBox(height: 12),
-                    Row(children: [const Icon(Icons.person, size: 16, color: Color(0xFF5C403D)), const SizedBox(width: 8), Expanded(child: Text(driverName, style: const TextStyle(fontSize: 14, color: Color(0xFF191C1D))))]),
+                    Row(children: [const Icon(Icons.person, size: 16, color: Color(0xFF5C403D)), const SizedBox(width: 8), Expanded(child: Text(driverName, style: const TextStyle(fontSize: 14, color: Color(0xFF191C1D)), maxLines: 1, overflow: TextOverflow.ellipsis))]),
                     const SizedBox(height: 8),
-                    Row(children: [const Icon(Icons.pin_drop, size: 16, color: Color(0xFF5C403D)), const SizedBox(width: 8), Expanded(child: Text(destination, style: const TextStyle(fontSize: 14, color: Color(0xFF191C1D))))]),
+                    Row(children: [const Icon(Icons.pin_drop, size: 16, color: Color(0xFF5C403D)), const SizedBox(width: 8), Expanded(child: Text(destination, style: const TextStyle(fontSize: 14, color: Color(0xFF191C1D)), maxLines: 1, overflow: TextOverflow.ellipsis))]),
                   ],
                 ),
               ),

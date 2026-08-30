@@ -37,6 +37,10 @@ dependencies:
   supabase_flutter: ^2.14.2
   flutter_mjpeg: ^2.0.4
   url_launcher: ^6.3.2
+  google_maps_flutter: ^2.18.0
+  geolocator: ^14.0.2
+  flutter_map: ^4.0.0
+  latlong2: ^0.8.2
 
 dev_dependencies:
   flutter_test:
