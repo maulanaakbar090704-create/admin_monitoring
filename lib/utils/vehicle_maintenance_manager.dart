@@ -94,6 +94,48 @@ class VehicleMaintenanceManager {
     return _maintenanceMap.values.toList();
   }
 
+  /// Sinkronisasi daftar pemeliharaan dari data armada Supabase
+  void syncFromSupabase(List<Map<String, dynamic>> vehicles) {
+    bool hasChange = false;
+    for (final v in vehicles) {
+      final id = v['id']?.toString() ?? '';
+      final regNo = v['registration_no']?.toString() ?? '';
+      final makeModel = v['make_model']?.toString() ?? 'Mobil Operasional';
+      final rawStatus = (v['status'] ?? '').toString().trim().toLowerCase();
+      final bool isMaint = v['is_maintenance'] == true ||
+          rawStatus == 'maintenance' ||
+          rawStatus == 'perbaikan' ||
+          rawStatus == 'dalam perbaikan';
+
+      if (isMaint && id.isNotEmpty) {
+        final reason = v['maintenance_reason']?.toString() ?? 'Perbaikan Berkala';
+        final startDate = v['maintenance_start_date'] != null
+            ? DateTime.tryParse(v['maintenance_start_date'].toString()) ?? DateTime.now()
+            : DateTime.now();
+
+        final existing = _maintenanceMap[id];
+        _maintenanceMap[id] = VehicleMaintenanceItem(
+          vehicleId: id,
+          registrationNo: regNo,
+          makeModel: makeModel,
+          issue: reason,
+          startedAt: startDate,
+          estimatedEnd: existing?.estimatedEnd ?? 'Dalam proses perbaikan',
+          adminNote: existing?.adminNote,
+        );
+        hasChange = true;
+      } else if (!isMaint && id.isNotEmpty && _maintenanceMap.containsKey(id)) {
+        _maintenanceMap.remove(id);
+        hasChange = true;
+      }
+    }
+
+    if (hasChange) {
+      maintenanceCountNotifier.value = _maintenanceMap.length;
+      _saveToStorage();
+    }
+  }
+
   Future<void> setVehicleMaintenance({
     required BuildContext context,
     required String vehicleId,
@@ -103,12 +145,13 @@ class VehicleMaintenanceManager {
     required String estimatedEnd,
     String? adminNote,
   }) async {
+    final now = DateTime.now();
     final item = VehicleMaintenanceItem(
       vehicleId: vehicleId,
       registrationNo: registrationNo,
       makeModel: makeModel,
       issue: issue,
-      startedAt: DateTime.now(),
+      startedAt: now,
       estimatedEnd: estimatedEnd,
       adminNote: adminNote,
     );
@@ -117,12 +160,26 @@ class VehicleMaintenanceManager {
     maintenanceCountNotifier.value = _maintenanceMap.length;
     await _saveToStorage();
 
-    // Sinkronisasi status armada di Supabase agar dinonaktifkan (active = false)
+    // Sinkronisasi status perbaikan lengkap ke tabel vehicles di Supabase
+    // agar tercatat di database dan aplikasi peminjam mendeteksi armada ini 'Dalam Perbaikan'
+    final updateData = {
+      'is_maintenance': true,
+      'maintenance_reason': issue,
+      'maintenance_start_date': now.toIso8601String(),
+      'status': 'maintenance',
+      'active': false,
+    };
+
+    final supabase = Supabase.instance.client;
     try {
-      final supabase = Supabase.instance.client;
-      await supabase.from('vehicles').update({'active': false}).eq('id', vehicleId);
+      if (vehicleId.isNotEmpty) {
+        await supabase.from('vehicles').update(updateData).eq('id', vehicleId);
+      } else if (registrationNo.isNotEmpty) {
+        await supabase.from('vehicles').update(updateData).eq('registration_no', registrationNo);
+      }
     } catch (e) {
-      debugPrint('Warning: sync maintenance to supabase vehicles failed: $e');
+      debugPrint('Error sync maintenance to supabase vehicles: $e');
+      rethrow;
     }
   }
 
@@ -141,12 +198,26 @@ class VehicleMaintenanceManager {
     maintenanceCountNotifier.value = _maintenanceMap.length;
     await _saveToStorage();
 
-    // Kembalikan armada menjadi Tersedia di Supabase (active = true)
+    // Kembalikan armada menjadi Tersedia di Supabase
+    final updateData = {
+      'is_maintenance': false,
+      'maintenance_reason': null,
+      'maintenance_start_date': null,
+      'status': 'available',
+      'active': true,
+    };
+
+    final supabase = Supabase.instance.client;
     try {
-      final supabase = Supabase.instance.client;
-      await supabase.from('vehicles').update({'active': true}).eq('id', vehicleId);
+      if (vehicleId.isNotEmpty) {
+        await supabase.from('vehicles').update(updateData).eq('id', vehicleId);
+      }
+      if (registrationNo != null && registrationNo.isNotEmpty) {
+        await supabase.from('vehicles').update(updateData).eq('registration_no', registrationNo);
+      }
     } catch (e) {
-      debugPrint('Warning: sync resolve maintenance to supabase vehicles failed: $e');
+      debugPrint('Error sync resolve maintenance to supabase vehicles: $e');
+      rethrow;
     }
   }
 

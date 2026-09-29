@@ -108,7 +108,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             children: [
               const Icon(Icons.check_circle, color: Colors.white),
               const SizedBox(width: 10),
-              Text(lm.t('profile_saved')),
+              Expanded(child: Text(lm.t('profile_saved'))),
             ],
           ),
           backgroundColor: const Color(0xFF1B873F),
@@ -359,12 +359,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                 ),
                               ),
                               const SizedBox(width: 8),
-                              const Text(
-                                'Admin Fleet & Monitoring',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Color(0xFF5C403D),
-                                  fontWeight: FontWeight.w500,
+                              const Flexible(
+                                child: Text(
+                                  'Admin Fleet & Monitoring',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF5C403D),
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
                             ],
@@ -425,10 +429,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           const SizedBox(height: 8),
                           TextFormField(
                             controller: _nikController,
-                            keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               prefixIcon: const Icon(Icons.badge_outlined, size: 20),
-                              hintText: 'Contoh: 090704 / NIK Telkom',
+                              hintText: 'Masukkan NIK',
                               filled: true,
                               fillColor: const Color(0xFFF8F9FA),
                               border: OutlineInputBorder(
@@ -493,7 +496,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             style: const TextStyle(
                               fontWeight: FontWeight.w600,
                               fontSize: 13,
-                              color: Colors.grey,
+                              color: Color(0xFF191C1D),
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -561,11 +564,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                 children: [
                                   const Icon(Icons.save_outlined, size: 20),
                                   const SizedBox(width: 8),
-                                  Text(
-                                    lm.t('save'),
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
+                                  Flexible(
+                                    child: FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Text(
+                                        lm.t('save'),
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ],

@@ -95,7 +95,9 @@ class _BookingDetailSheetState extends State<BookingDetailSheet> {
               children: [
                 Icon(Icons.check_circle, color: Colors.white),
                 SizedBox(width: 8),
-                Text('Peminjaman berhasil disetujui (ACC)! Armada kini berstatus Sedang Dipakai.'),
+                Expanded(
+                  child: Text('Peminjaman berhasil disetujui (ACC)! Armada kini berstatus Sedang Dipakai.'),
+                ),
               ],
             ),
             backgroundColor: Color(0xFF2E7D32),
@@ -129,7 +131,12 @@ class _BookingDetailSheetState extends State<BookingDetailSheet> {
           children: [
             Icon(Icons.cancel, color: Color(0xFFBB0016)),
             SizedBox(width: 8),
-            Text('Tolak Peminjaman', style: TextStyle(fontFamily: 'Hanken Grotesk', fontSize: 18, fontWeight: FontWeight.bold)),
+            Expanded(
+              child: Text(
+                'Tolak Peminjaman',
+                style: TextStyle(fontFamily: 'Hanken Grotesk', fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
           ],
         ),
         content: const Text(
@@ -206,7 +213,12 @@ class _BookingDetailSheetState extends State<BookingDetailSheet> {
           children: [
             Icon(Icons.check_circle, color: Color(0xFF0F3567)),
             SizedBox(width: 8),
-            Text('Selesaikan Peminjaman', style: TextStyle(fontFamily: 'Hanken Grotesk', fontSize: 18, fontWeight: FontWeight.bold)),
+            Expanded(
+              child: Text(
+                'Selesaikan Peminjaman',
+                style: TextStyle(fontFamily: 'Hanken Grotesk', fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
           ],
         ),
         content: const Text(
@@ -598,12 +610,15 @@ class _BookingDetailSheetState extends State<BookingDetailSheet> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
               onPressed: _rejectBooking,
-              child: Text(
-                lm.t('btn_reject_booking'),
-                style: const TextStyle(
-                  color: Color(0xFFBB0016),
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  lm.t('btn_reject_booking'),
+                  style: const TextStyle(
+                    color: Color(0xFFBB0016),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
                 ),
               ),
             ),
@@ -633,17 +648,20 @@ class _BookingDetailSheetState extends State<BookingDetailSheet> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.transparent,
                   shadowColor: Colors.transparent,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
                 onPressed: _approveBooking,
                 icon: const Icon(Icons.check_circle_outline, color: Colors.white, size: 20),
-                label: Text(
-                  lm.t('btn_approve_full'),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+                label: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    lm.t('btn_approve_full'),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
                   ),
                 ),
               ),
@@ -693,9 +711,12 @@ class _BookingDetailSheetState extends State<BookingDetailSheet> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
               icon: const Icon(Icons.assignment_turned_in_rounded, size: 18),
-              label: Text(
-                lm.t('btn_finish_trip'),
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+              label: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  lm.t('btn_finish_trip'),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+                ),
               ),
               onPressed: _completeBooking,
             ),

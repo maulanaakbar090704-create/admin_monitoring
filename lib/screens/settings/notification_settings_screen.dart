@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../utils/language_manager.dart';
+import '../../utils/notification_permission_helper.dart';
 
 class NotificationSettingsScreen extends StatefulWidget {
   const NotificationSettingsScreen({super.key});
@@ -269,7 +270,31 @@ class _NotificationSettingsScreenState extends State<NotificationSettingsScreen>
             onChanged: (val) => setState(() => _emailDigest = val),
           ),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
+
+          // Tombol Izin Notifikasi HP Sistem
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0F3567),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: const Icon(Icons.security_update_good_rounded, size: 18),
+              label: const Text(
+                'Periksa / Berikan Izin Notifikasi HP',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+              ),
+              onPressed: () {
+                NotificationPermissionHelper.showNotificationPermissionDialog(context);
+              },
+            ),
+          ),
+          const SizedBox(height: 12),
 
           // Tombol Uji Notifikasi
           SizedBox(

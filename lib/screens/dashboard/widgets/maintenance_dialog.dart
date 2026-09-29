@@ -74,10 +74,17 @@ class _MaintenanceDialogState extends State<MaintenanceDialog> {
   void _loadExistingInfo() {
     final existing = VehicleMaintenanceManager.instance
         .getMaintenanceInfo(_selectedVehicleId, null);
+    final vehicle = _getSelectedVehicle();
     if (existing != null) {
       _issueController.text = existing.issue;
       _estimatedEndController.text = existing.estimatedEnd;
       _noteController.text = existing.adminNote ?? '';
+    } else if (vehicle != null &&
+        (vehicle['is_maintenance'] == true || vehicle['maintenance_reason'] != null)) {
+      _issueController.text =
+          vehicle['maintenance_reason']?.toString() ?? 'Servis Berkala & Ganti Oli';
+      _estimatedEndController.text = '2-3 hari kerja';
+      _noteController.clear();
     } else {
       _issueController.text = 'Servis Berkala & Ganti Oli';
       _estimatedEndController.text = '2-3 hari kerja';
@@ -224,8 +231,12 @@ class _MaintenanceDialogState extends State<MaintenanceDialog> {
   @override
   Widget build(BuildContext context) {
     final lm = LanguageManager.instance;
-    final isCurrentlyMaintenance = VehicleMaintenanceManager.instance
-        .isUnderMaintenance(_selectedVehicleId, null);
+    final selectedVehicle = _getSelectedVehicle();
+    final rawStatus = (selectedVehicle?['status'] ?? '').toString().trim().toLowerCase();
+    final isCurrentlyMaintenance = (selectedVehicle?['is_maintenance'] == true) ||
+        rawStatus == 'maintenance' ||
+        rawStatus == 'perbaikan' ||
+        VehicleMaintenanceManager.instance.isUnderMaintenance(_selectedVehicleId, null);
     final currentItem = _buildCurrentItem();
     final notifMessage = VehicleMaintenanceManager.instance
         .generateNotificationMessage(currentItem);
@@ -334,8 +345,12 @@ class _MaintenanceDialogState extends State<MaintenanceDialog> {
                         items: widget.vehicles.map((v) {
                           final makeModel = v['make_model'] ?? 'Mobil Operasional';
                           final plate = v['registration_no'] ?? '-';
-                          final isMaint = VehicleMaintenanceManager.instance
-                              .isUnderMaintenance(v['id'], plate);
+                          final itemStatus = (v['status'] ?? '').toString().trim().toLowerCase();
+                          final isMaint = v['is_maintenance'] == true ||
+                              itemStatus == 'maintenance' ||
+                              itemStatus == 'perbaikan' ||
+                              VehicleMaintenanceManager.instance
+                                  .isUnderMaintenance(v['id'], plate);
 
                           return DropdownMenuItem<String>(
                             value: v['id'],
@@ -567,17 +582,20 @@ class _MaintenanceDialogState extends State<MaintenanceDialog> {
                               context: context, item: currentItem),
                       icon: const Icon(Icons.send_rounded,
                           size: 16, color: Color(0xFF2E7D32)),
-                      label: const Text(
-                        'Kirim Pesan via WhatsApp ke Driver / Peminjam',
-                        style: TextStyle(
-                          color: Color(0xFF2E7D32),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12.5,
+                      label: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          'Kirim Pesan via WhatsApp ke Driver / Peminjam',
+                          style: TextStyle(
+                            color: Color(0xFF2E7D32),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12.5,
+                          ),
                         ),
                       ),
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: Color(0xFF2E7D32)),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10)),
                       ),
@@ -605,17 +623,20 @@ class _MaintenanceDialogState extends State<MaintenanceDialog> {
                             onPressed: _handleResolveMaintenance,
                             icon: const Icon(Icons.check_circle_outline,
                                 size: 18, color: Color(0xFF2E7D32)),
-                            label: const Text(
-                              'Selesai Perbaikan',
-                              style: TextStyle(
-                                color: Color(0xFF2E7D32),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
+                            label: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                'Selesai Perbaikan',
+                                style: TextStyle(
+                                  color: Color(0xFF2E7D32),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
                               ),
                             ),
                             style: OutlinedButton.styleFrom(
                               side: const BorderSide(color: Color(0xFF2E7D32)),
-                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10)),
                             ),
@@ -629,19 +650,22 @@ class _MaintenanceDialogState extends State<MaintenanceDialog> {
                           onPressed: _handleSaveMaintenance,
                           icon: const Icon(Icons.save_rounded,
                               size: 18, color: Colors.white),
-                          label: Text(
-                            isCurrentlyMaintenance
-                                ? 'Update Data'
-                                : 'Setel Dalam Perbaikan',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
+                          label: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              isCurrentlyMaintenance
+                                  ? 'Update Data'
+                                  : 'Setel Dalam Perbaikan',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
                             ),
                           ),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFFBB0016),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10)),
                           ),

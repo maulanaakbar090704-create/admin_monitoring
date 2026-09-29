@@ -50,7 +50,11 @@ class _FleetStatusCardState extends State<FleetStatusCard> {
     for (final v in widget.vehicles) {
       final regNo = (v['registration_no'] ?? '').toString().trim().toUpperCase();
       final vehicleId = v['id']?.toString() ?? '';
-      final isMaintenance = maintenanceMgr.isUnderMaintenance(vehicleId, regNo);
+      final rawStatus = (v['status'] ?? '').toString().trim().toLowerCase();
+      final isMaintenance = v['is_maintenance'] == true ||
+          rawStatus == 'maintenance' ||
+          rawStatus == 'perbaikan' ||
+          maintenanceMgr.isUnderMaintenance(vehicleId, regNo);
 
       if (isMaintenance) {
         maintenanceVehicles.add(v);
@@ -366,12 +370,15 @@ class _FleetStatusCardState extends State<FleetStatusCard> {
                 initialVehicleId: v['id'],
                 onSaved: widget.onRefresh,
               ),
-              child: const Text(
-                'Set Perbaikan',
-                style: TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFFD97706),
+              child: const FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  'Set Perbaikan',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFFD97706),
+                  ),
                 ),
               ),
             ),
@@ -489,12 +496,15 @@ class _FleetStatusCardState extends State<FleetStatusCard> {
                 color: const Color(0xFFFFDAD6),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Text(
-                'SEDANG DIPAKAI',
-                style: TextStyle(
-                  fontSize: 9.5,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF93000A),
+              child: const FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  'SEDANG DIPAKAI',
+                  style: TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF93000A),
+                  ),
                 ),
               ),
             ),
@@ -527,7 +537,7 @@ class _FleetStatusCardState extends State<FleetStatusCard> {
         final plate = v['registration_no'] ?? '-';
         final maintInfo =
             maintenanceMgr.getMaintenanceInfo(v['id'], plate);
-        final issue = maintInfo?.issue ?? 'Perbaikan & Servis Rutin';
+        final issue = maintInfo?.issue ?? v['maintenance_reason'] ?? 'Perbaikan & Servis Rutin';
         final estimatedEnd = maintInfo?.estimatedEnd ?? 'Dalam proses bengkel';
 
         return Container(
@@ -581,6 +591,8 @@ class _FleetStatusCardState extends State<FleetStatusCard> {
                             fontWeight: FontWeight.w600,
                             color: Color(0xFFB45309),
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
@@ -593,12 +605,15 @@ class _FleetStatusCardState extends State<FleetStatusCard> {
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(color: const Color(0xFFF59E0B)),
                     ),
-                    child: const Text(
-                      'PERBAIKAN',
-                      style: TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFFB45309),
+                    child: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        'PERBAIKAN',
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFFB45309),
+                        ),
                       ),
                     ),
                   ),
@@ -666,19 +681,22 @@ class _FleetStatusCardState extends State<FleetStatusCard> {
                     child: OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: Color(0xFF2E7D32)),
-                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(6)),
                         visualDensity: VisualDensity.compact,
                       ),
                       icon: const Icon(Icons.send_rounded,
                           size: 13, color: Color(0xFF2E7D32)),
-                      label: const Text(
-                        'Kirim Notif WA',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF2E7D32),
+                      label: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          'Kirim Notif WA',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF2E7D32),
+                          ),
                         ),
                       ),
                       onPressed: () {
@@ -710,18 +728,21 @@ class _FleetStatusCardState extends State<FleetStatusCard> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF2E7D32),
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(6)),
                         visualDensity: VisualDensity.compact,
                         elevation: 0,
                       ),
                       icon: const Icon(Icons.check_circle_outline, size: 13),
-                      label: const Text(
-                        'Selesai Perbaikan',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
+                      label: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          'Selesai Perbaikan',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                       onPressed: () async {

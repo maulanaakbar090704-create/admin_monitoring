@@ -404,12 +404,17 @@ class DashboardBookingCard extends StatelessWidget {
                           children: [
                             const Icon(Icons.assignment_turned_in_rounded, size: 16, color: Colors.white),
                             const SizedBox(width: 8),
-                            Text(
-                              lm.t('btn_approve_full'),
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
+                            Flexible(
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  lm.t('btn_approve_full'),
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
                               ),
                             ),
                           ],

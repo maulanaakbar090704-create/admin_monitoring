@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../utils/direction_helper.dart';
+import '../../utils/security_manager.dart';
 
 /// Halaman Tracking Map Real-time dengan Flutter Map, LatLong2, & Supabase Stream.
 ///
@@ -50,6 +53,17 @@ class _TrackingMapPageState extends State<TrackingMapPage>
   // Data Telemetri (Default 0 jika null)
   double _speedKmh = 0.0;
   double _distanceKm = 0.0;
+  double _bearing = 0.0; // Derajat arah kendaraan (0.0 - 360.0)
+  String _cardinalDirection = 'Utara';
+  String _cardinalAbbr = 'U';
+
+  // State Integritas Keamanan Telemetri
+  DateTime? _lastCoordinateTime;
+  GpsSecurityReport _securityReport = const GpsSecurityReport(
+    status: GpsSecurityStatus.verified,
+    message: 'Koneksi GPS aman & terenkripsi.',
+    isSafe: true,
+  );
 
   // Data Peminjam
   String _borrowerName = 'Memuat peminjam...';
@@ -114,7 +128,7 @@ class _TrackingMapPageState extends State<TrackingMapPage>
               if (mounted) {
                 setState(() {
                   _isLoading = false;
-                  _errorMessage = 'Gagal terhubung ke Supabase: ${error.toString()}';
+                  _errorMessage = SecurityManager.instance.sanitizeErrorMessage(error);
                 });
               }
             },
@@ -123,7 +137,7 @@ class _TrackingMapPageState extends State<TrackingMapPage>
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _errorMessage = 'Inisialisasi stream error: $e';
+          _errorMessage = SecurityManager.instance.sanitizeErrorMessage(e);
         });
       }
     }
@@ -187,38 +201,69 @@ class _TrackingMapPageState extends State<TrackingMapPage>
       _fetchBorrowerProfile(employeeId);
     }
 
-    // Handle jika latitude atau longitude masih null dari database
-    if (rawLat == null || rawLng == null) {
+    // 1. Validasi Keamanan Koordinat menggunakan SecurityManager
+    final double? rawLatNum = (rawLat as num?)?.toDouble();
+    final double? rawLngNum = (rawLng as num?)?.toDouble();
+
+    if (!SecurityManager.instance.isValidCoordinate(rawLatNum, rawLngNum)) {
       setState(() {
-        _isLoading = true;
-        _errorMessage = null;
+        _isLoading = false;
+        _errorMessage = 'Koordinat GPS tidak valid atau di luar wilayah operasional yang sah.';
       });
       return;
     }
 
-    final double lat = (rawLat as num).toDouble();
-    final double lng = (rawLng as num).toDouble();
+    final double lat = rawLatNum!;
+    final double lng = rawLngNum!;
     final LatLng newCoord = LatLng(lat, lng);
+    final now = DateTime.now();
 
-    // 1. Simpan koordinat pertama sebagai startLocation
+    // 2. Jalankan Analisis Integritas Telemetri & Deteksi Fake GPS / Spoofing
+    final report = SecurityManager.instance.analyzeTelemtryIntegrity(
+      previousCoord: _currentLocation,
+      currentCoord: newCoord,
+      previousTimestamp: _lastCoordinateTime,
+      currentTimestamp: now,
+      reportedSpeedKmh: speed,
+    );
+
+    // 3. Simpan koordinat pertama sebagai startLocation
     if (_startLocation == null) {
       _startLocation = newCoord;
-      // Untuk jarak juga kasih 0 jika baru mulai atau belum bergerak
       final rawJarak = (row['jarak'] as num?)?.toDouble();
       _distanceKm = rawJarak ?? 0.0;
     } else {
-      // 2. Kalkulasi jarak tempuh lokal menggunakan Distance() dari latlong2 ke KM
       final double distanceInMeters = _distanceCalc(_startLocation!, newCoord);
       _distanceKm = distanceInMeters / 1000.0;
     }
 
-    // Rekam lintasan posisi untuk rute perjalanan
+    // Rekam lintasan rute perjalanan
     if (_routeTrail.isEmpty || _routeTrail.last != newCoord) {
       _routeTrail.add(newCoord);
     }
 
+    // Ambil atau kalkulasi arah kendaraan (bearing / heading)
+    double newBearing = _bearing;
+    final rawHeading = (row['heading'] ?? row['bearing'] ?? row['arah'] as num?)?.toDouble();
+    if (rawHeading != null) {
+      newBearing = DirectionHelper.normalizeDegrees(rawHeading);
+    } else if (_currentLocation != null && _currentLocation != newCoord) {
+      final double distanceMoved = _distanceCalc(_currentLocation!, newCoord);
+      if (distanceMoved > 1.5 || speed > 0.5) {
+        newBearing = DirectionHelper.calculateBearing(_currentLocation!, newCoord);
+      }
+    }
+
+    final cardinal = DirectionHelper.getCardinalName(newBearing);
+    final abbr = DirectionHelper.getCardinalAbbreviation(newBearing);
+
     setState(() {
       _currentLocation = newCoord;
+      _lastCoordinateTime = now;
+      _securityReport = report;
+      _bearing = newBearing;
+      _cardinalDirection = cardinal;
+      _cardinalAbbr = abbr;
       _speedKmh = speed;
       _isLoading = false;
       _errorMessage = null;
@@ -375,7 +420,7 @@ class _TrackingMapPageState extends State<TrackingMapPage>
     );
   }
 
-  /// Marker Ikon Mobil dengan Efek Radar & Label Plat Nomor
+  /// Marker Ikon Mobil dengan Efek Radar & Orientasi Arah Kendaraan
   Widget _buildCarVehicleMarker() {
     return AnimatedBuilder(
       animation: _pulseAnimation,
@@ -385,57 +430,105 @@ class _TrackingMapPageState extends State<TrackingMapPage>
           children: [
             // Gelombang Radar Emas (Glow Pulse)
             Container(
-              width: 64 * _pulseAnimation.value,
-              height: 64 * _pulseAnimation.value,
+              width: 68 * _pulseAnimation.value,
+              height: 68 * _pulseAnimation.value,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: _kGoldPrimary.withValues(alpha: 0.15),
+                color: _kGoldPrimary.withValues(alpha: 0.12),
                 border: Border.all(
-                  color: _kGoldPrimary.withValues(alpha: 0.35),
+                  color: _kGoldPrimary.withValues(alpha: 0.3),
                   width: 1.5,
                 ),
               ),
             ),
 
-            // Base Marker Lingkaran Gelap Beraksen Emas
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: const RadialGradient(
-                  colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
-                ),
-                border: Border.all(
-                  color: _kGoldPrimary,
-                  width: 2.2,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: _kGoldPrimary.withValues(alpha: 0.45),
-                    blurRadius: 14,
-                    spreadRadius: 2,
+            // Base Marker Lingkaran Gelap Beraksen Emas dengan Rotasi Sesuai Arah Kendaraan
+            Transform.rotate(
+              angle: _bearing * (math.pi / 180.0),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // Beam / Sorot Arah ke Depan Kendaraan
+                  Positioned(
+                    top: 2,
+                    child: Container(
+                      width: 18,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            _kGoldPrimary.withValues(alpha: 0.85),
+                            _kGoldPrimary.withValues(alpha: 0.0),
+                          ],
+                        ),
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                      ),
+                    ),
+                  ),
+
+                  // Bodi Utama Marker Kendaraan
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: const RadialGradient(
+                        colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
+                      ),
+                      border: Border.all(
+                        color: _kGoldPrimary,
+                        width: 2.2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _kGoldPrimary.withValues(alpha: 0.45),
+                          blurRadius: 14,
+                          spreadRadius: 2,
+                        ),
+                      ],
+                    ),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        // Panah Orientasi Arah Navigasi (Menghadap lurus ke depan)
+                        Positioned(
+                          top: 5,
+                          child: Icon(
+                            Icons.arrow_drop_up_rounded,
+                            color: _kGoldLight,
+                            size: 16,
+                          ),
+                        ),
+                        // Ikon Navigasi Arah Kendaraan
+                        const Icon(
+                          Icons.navigation_rounded,
+                          color: _kGoldPrimary,
+                          size: 22,
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
-              child: const Center(
-                child: Icon(
-                  Icons.directions_car_rounded,
-                  color: _kGoldPrimary,
-                  size: 24,
-                ),
-              ),
             ),
 
-            // Mini Label Status "ACTIVE"
+            // Mini Badge Status & Arah Mata Angin (Tetap tegak agar mudah dibaca pengguna)
             Positioned(
-              bottom: 2,
+              bottom: 0,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: _kCardDark,
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(color: _kGoldSecondary, width: 0.8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      blurRadius: 4,
+                    ),
+                  ],
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -449,13 +542,14 @@ class _TrackingMapPageState extends State<TrackingMapPage>
                       ),
                     ),
                     const SizedBox(width: 4),
-                    const Text(
-                      'ACTIVE',
-                      style: TextStyle(
+                    Text(
+                      '$_cardinalAbbr • ${_bearing.round()}°',
+                      style: const TextStyle(
                         color: _kGoldLight,
                         fontSize: 8,
-                        fontWeight: FontWeight.w700,
+                        fontWeight: FontWeight.w800,
                         letterSpacing: 0.5,
+                        fontFamily: 'monospace',
                       ),
                     ),
                   ],
@@ -580,41 +674,56 @@ class _TrackingMapPageState extends State<TrackingMapPage>
                       ],
                     ),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _kGreenLive.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: _kGreenLive.withValues(alpha: 0.5),
-                        width: 1,
+                  // Lencana Status Keamanan Telemetri GPS
+                  Flexible(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
                       ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 6,
-                          height: 6,
-                          decoration: const BoxDecoration(
-                            color: _kGreenLive,
-                            shape: BoxShape.circle,
-                          ),
+                      decoration: BoxDecoration(
+                        color: _securityReport.isSafe
+                            ? _kGreenLive.withValues(alpha: 0.15)
+                            : const Color(0xFFDC2626).withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: _securityReport.isSafe
+                              ? _kGreenLive.withValues(alpha: 0.5)
+                              : const Color(0xFFEF4444),
+                          width: 1,
                         ),
-                        const SizedBox(width: 5),
-                        const Text(
-                          'ONLINE',
-                          style: TextStyle(
-                            color: _kGreenLive,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.8,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _securityReport.isSafe
+                                ? Icons.verified_user_rounded
+                                : Icons.gpp_bad_rounded,
+                            size: 11,
+                            color: _securityReport.isSafe
+                                ? _kGreenLive
+                                : const Color(0xFFF87171),
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                _securityReport.isSafe ? 'TERVERIFIKASI' : 'ANOMALI',
+                                style: TextStyle(
+                                  color: _securityReport.isSafe
+                                      ? _kGreenLive
+                                      : const Color(0xFFFCA5A5),
+                                  fontSize: 8.5,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.6,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -841,9 +950,38 @@ class _TrackingMapPageState extends State<TrackingMapPage>
                     ),
                   ),
 
+                  // Banner Peringatan Keamanan jika Terdeteksi Anomali
+                  if (!_securityReport.isSafe)
+                    Container(
+                      margin: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF450A0A),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFEF4444), width: 1.2),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.security_update_warning_rounded, color: Color(0xFFEF4444), size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _securityReport.message,
+                              style: const TextStyle(
+                                color: Color(0xFFFCA5A5),
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                height: 1.25,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
                   const SizedBox(height: 12),
 
-                  // 2. DUA STAT METRIK UTAMA: KECEPATAN & JARAK TEMPUH
+                  // 2. TIGA STAT METRIK UTAMA: KECEPATAN, ARAH KENDARAAN, & JARAK TEMPUH
                   Row(
                     children: [
                       // KECEPATAN (km/h) -> Default 0
@@ -857,31 +995,22 @@ class _TrackingMapPageState extends State<TrackingMapPage>
                         ),
                       ),
 
-                      // Garis Vertikal Pemisah Metalik
-                      Container(
-                        width: 1,
-                        height: 52,
-                        margin: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              Colors.transparent,
-                              _kCardBorder,
-                              _kGoldPrimary.withValues(alpha: 0.3),
-                              _kCardBorder,
-                              Colors.transparent,
-                            ],
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                          ),
-                        ),
+                      // Garis Vertikal Pemisah
+                      _buildVerticalDivider(),
+
+                      // ARAH KENDARAAN (Heading & Mata Angin)
+                      Expanded(
+                        child: _buildHeadingMetricTile(),
                       ),
+
+                      // Garis Vertikal Pemisah
+                      _buildVerticalDivider(),
 
                       // JARAK TEMPUH (KM) -> Default 0
                       Expanded(
                         child: _buildMetricTile(
                           icon: Icons.alt_route_rounded,
-                          title: 'JARAK TEMPUH',
+                          title: 'JARAK',
                           value: _distanceKm.toStringAsFixed(2),
                           unit: 'KM',
                           valueColor: _kGoldLight,
@@ -892,7 +1021,7 @@ class _TrackingMapPageState extends State<TrackingMapPage>
 
                   const SizedBox(height: 10),
 
-                  // 3. Koordinat Lat/Long Terkini
+                  // 3. Koordinat Lat/Long & Arah Terkini
                   if (_currentLocation != null)
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -909,19 +1038,25 @@ class _TrackingMapPageState extends State<TrackingMapPage>
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(
-                            Icons.my_location_rounded,
-                            color: _kGoldSecondary,
-                            size: 12,
+                          Transform.rotate(
+                            angle: _bearing * (math.pi / 180.0),
+                            child: const Icon(
+                              Icons.navigation_rounded,
+                              color: _kGoldSecondary,
+                              size: 12,
+                            ),
                           ),
                           const SizedBox(width: 6),
-                          Text(
-                            'Lat: ${_currentLocation!.latitude.toStringAsFixed(5)}, Lng: ${_currentLocation!.longitude.toStringAsFixed(5)}',
-                            style: const TextStyle(
-                              color: _kTextMuted,
-                              fontSize: 10,
-                              fontFamily: 'monospace',
-                              fontWeight: FontWeight.w500,
+                          Flexible(
+                            child: Text(
+                              'Lat: ${_currentLocation!.latitude.toStringAsFixed(4)}, Lng: ${_currentLocation!.longitude.toStringAsFixed(4)} • $_cardinalDirection (${_bearing.round()}°)',
+                              style: const TextStyle(
+                                color: _kTextMuted,
+                                fontSize: 10,
+                                fontFamily: 'monospace',
+                                fontWeight: FontWeight.w500,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ],
@@ -933,6 +1068,100 @@ class _TrackingMapPageState extends State<TrackingMapPage>
           ],
         ),
       ),
+    );
+  }
+
+  /// Widget Item Metrik Telemetri Individual
+  /// Pemisah Vertikal Metalik untuk Metrik
+  Widget _buildVerticalDivider() {
+    return Container(
+      width: 1,
+      height: 48,
+      margin: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.transparent,
+            _kCardBorder,
+            _kGoldPrimary.withValues(alpha: 0.3),
+            _kCardBorder,
+            Colors.transparent,
+          ],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+      ),
+    );
+  }
+
+  /// Tile Metrik Arah Kendaraan Khusus dengan Ikon Kompas Berputar
+  Widget _buildHeadingMetricTile() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Transform.rotate(
+              angle: _bearing * (math.pi / 180.0),
+              child: const Icon(
+                Icons.navigation_rounded,
+                color: _kGoldPrimary,
+                size: 13,
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Text(
+              'ARAH',
+              style: TextStyle(
+                color: _kTextMuted,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                _cardinalAbbr,
+                style: const TextStyle(
+                  color: _kGoldLight,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.5,
+                  fontFamily: 'monospace',
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '${_bearing.round()}°',
+                style: TextStyle(
+                  color: _kGoldPrimary.withValues(alpha: 0.85),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 1),
+        Text(
+          _cardinalDirection,
+          style: const TextStyle(
+            color: _kTextMuted,
+            fontSize: 9,
+            fontWeight: FontWeight.w500,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
     );
   }
 
@@ -949,8 +1178,8 @@ class _TrackingMapPageState extends State<TrackingMapPage>
       children: [
         Row(
           children: [
-            Icon(icon, color: _kGoldPrimary, size: 14),
-            const SizedBox(width: 5),
+            Icon(icon, color: _kGoldPrimary, size: 13),
+            const SizedBox(width: 4),
             Text(
               title,
               style: const TextStyle(
@@ -963,36 +1192,39 @@ class _TrackingMapPageState extends State<TrackingMapPage>
           ],
         ),
         const SizedBox(height: 4),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.baseline,
-          textBaseline: TextBaseline.alphabetic,
-          children: [
-            Text(
-              value,
-              style: TextStyle(
-                color: valueColor,
-                fontSize: 24,
-                fontWeight: FontWeight.w900,
-                letterSpacing: -0.5,
-                fontFamily: 'monospace',
-                shadows: [
-                  Shadow(
-                    color: _kGoldPrimary.withValues(alpha: 0.35),
-                    blurRadius: 10,
-                  ),
-                ],
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                value,
+                style: TextStyle(
+                  color: valueColor,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.5,
+                  fontFamily: 'monospace',
+                  shadows: [
+                    Shadow(
+                      color: _kGoldPrimary.withValues(alpha: 0.35),
+                      blurRadius: 10,
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              unit,
-              style: TextStyle(
-                color: _kGoldPrimary.withValues(alpha: 0.8),
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
+              const SizedBox(width: 4),
+              Text(
+                unit,
+                style: TextStyle(
+                  color: _kGoldPrimary.withValues(alpha: 0.8),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );

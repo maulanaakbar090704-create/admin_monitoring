@@ -196,15 +196,20 @@ class HistoryCard extends StatelessWidget {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          'Lihat Detail Peminjaman & Foto',
-                          style: TextStyle(
-                            fontFamily: 'Inter',
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFFBB0016),
+                        Expanded(
+                          child: Text(
+                            'Lihat Detail Peminjaman & Foto',
+                            style: TextStyle(
+                              fontFamily: 'Inter',
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFFBB0016),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
+                        SizedBox(width: 6),
                         Icon(Icons.chevron_right, size: 18, color: Color(0xFFBB0016)),
                       ],
                     ),

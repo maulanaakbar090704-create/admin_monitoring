@@ -1,9 +1,12 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import '../../../utils/direction_helper.dart';
 
 class VehicleDetailSheet extends StatelessWidget {
   final List<Map<String, dynamic>> activeBookings;
   final double currentSpeed;
   final double maxSpeed;
+  final double currentHeading;
   final String? selectedBookingId;
   final Function(String id)? onSelectBooking;
   final Function(String?) onLaunchWA;
@@ -15,6 +18,7 @@ class VehicleDetailSheet extends StatelessWidget {
     required this.activeBookings,
     required this.currentSpeed,
     required this.maxSpeed,
+    this.currentHeading = 0.0,
     this.selectedBookingId,
     this.onSelectBooking,
     required this.onLaunchWA,
@@ -58,9 +62,9 @@ class VehicleDetailSheet extends StatelessWidget {
                 ),
               ),
 
-              // Speed Telemetry Header - Responsive without horizontal RenderFlex overflow
+              // Speed & Direction Telemetry Header - Responsive without horizontal RenderFlex overflow
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 margin: const EdgeInsets.only(bottom: 16),
                 decoration: BoxDecoration(
                   color: const Color(0xFFF8F9FA),
@@ -75,7 +79,7 @@ class VehicleDetailSheet extends StatelessWidget {
                           const FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Text(
-                              'KECEPATAN SAAT INI',
+                              'KECEPATAN',
                               style: TextStyle(
                                 fontSize: 9,
                                 fontWeight: FontWeight.bold,
@@ -89,7 +93,7 @@ class VehicleDetailSheet extends StatelessWidget {
                             child: Text(
                               '${currentSpeed.toStringAsFixed(1)} km/h',
                               style: const TextStyle(
-                                fontSize: 20,
+                                fontSize: 18,
                                 fontWeight: FontWeight.w900,
                                 color: Color(0xFF0F3567),
                               ),
@@ -105,7 +109,51 @@ class VehicleDetailSheet extends StatelessWidget {
                           const FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Text(
-                              'TOP SPEED (MAKS)',
+                              'ARAH KENDARAAN',
+                              style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Transform.rotate(
+                                  angle: currentHeading * (math.pi / 180.0),
+                                  child: const Icon(
+                                    Icons.navigation_rounded,
+                                    size: 14,
+                                    color: Color(0xFFD97706),
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${DirectionHelper.getCardinalAbbreviation(currentHeading)} ${currentHeading.round()}°',
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFFD97706),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(width: 1, height: 32, color: Colors.grey.shade300),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          const FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              'TOP SPEED',
                               style: TextStyle(
                                 fontSize: 9,
                                 fontWeight: FontWeight.bold,
@@ -117,9 +165,9 @@ class VehicleDetailSheet extends StatelessWidget {
                           FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Text(
-                              '${maxSpeed.toStringAsFixed(1)} km/h',
+                              '${maxSpeed.toStringAsFixed(0)} km/h',
                               style: const TextStyle(
-                                fontSize: 20,
+                                fontSize: 18,
                                 fontWeight: FontWeight.w900,
                                 color: Color(0xFFBB0016),
                               ),

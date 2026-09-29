@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../utils/language_manager.dart';
+import '../../utils/session_manager.dart';
 import '../common/custom_bottom_nav.dart';
 import '../login/login_screen.dart';
 import 'about_app_screen.dart';
@@ -134,6 +135,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
 
       await supabase.auth.signOut();
+      await SessionManager.instance.clearSession(keepSavedId: true);
 
       if (!mounted) return;
 

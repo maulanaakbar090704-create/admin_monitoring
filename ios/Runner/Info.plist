@@ -66,5 +66,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Aplikasi Admin Monitoring memerlukan akses lokasi GPS untuk memvalidasi posisi dan memantau armada secara presisi.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Aplikasi Admin Monitoring memerlukan akses lokasi GPS untuk memvalidasi posisi dan memantau armada secara presisi.</string>
 </dict>
 </plist>

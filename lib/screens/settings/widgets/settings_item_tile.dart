@@ -39,16 +39,23 @@ class SettingsItemTile extends StatelessWidget {
             fontSize: 14,
             color: Color(0xFF191C1D),
           ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
         trailing: trailing != null
             ? Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    trailing!,
-                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 120),
+                    child: Text(
+                      trailing!,
+                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 4),
                   const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
                 ],
               )

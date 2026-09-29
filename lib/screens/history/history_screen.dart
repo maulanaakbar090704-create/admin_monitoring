@@ -7,7 +7,14 @@ import 'widgets/history_card.dart';
 import 'widgets/history_detail_sheet.dart';
 
 class HistoryScreen extends StatefulWidget {
-  const HistoryScreen({super.key});
+  final String initialFilter;
+  final String? targetBookingId;
+
+  const HistoryScreen({
+    super.key,
+    this.initialFilter = 'all',
+    this.targetBookingId,
+  });
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
@@ -19,12 +26,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
   List<Map<String, dynamic>> _allBookings = [];
   List<Map<String, dynamic>> _filteredBookings = [];
   bool _isLoading = true;
-  String _selectedFilterKey = 'all';
+  late String _selectedFilterKey;
   final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
+    _selectedFilterKey = widget.initialFilter;
     _fetchHistory();
     _searchController.addListener(_applyFilter);
   }
@@ -75,6 +83,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
           _isLoading = false;
         });
         _applyFilter();
+
+        // Jika ada target booking yang ingin langsung di-ACC
+        if (widget.targetBookingId != null) {
+          final matched = _allBookings.where((b) => b['id']?.toString() == widget.targetBookingId).toList();
+          if (matched.isNotEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                HistoryDetailSheet.show(
+                  context,
+                  matched.first,
+                  onStatusUpdated: _fetchHistory,
+                );
+              }
+            });
+          }
+        }
       }
     } catch (e) {
       debugPrint('Error fetch history: $e');
@@ -117,6 +141,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   Widget build(BuildContext context) {
     final lm = LanguageManager.instance;
+    final int pendingCount = _allBookings.where((item) => BookingHelper.normalizeStatus(item['status']) == 'pending').length;
+    final int activeCount = _allBookings.where((item) => BookingHelper.normalizeStatus(item['status']) == 'active').length;
+    final int completedCount = _allBookings.where((item) => BookingHelper.normalizeStatus(item['status']) == 'completed').length;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
@@ -144,13 +171,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
               child: const Icon(Icons.history, color: Colors.white, size: 20),
             ),
             const SizedBox(width: 12),
-            Text(
-              lm.t('history_title'),
-              style: const TextStyle(
-                fontFamily: 'Hanken Grotesk',
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
+            Expanded(
+              child: Text(
+                lm.t('history_title'),
+                style: const TextStyle(
+                  fontFamily: 'Hanken Grotesk',
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
@@ -211,19 +242,74 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     scrollDirection: Axis.horizontal,
                     child: Row(
                       children: [
-                        _buildFilterChip('all', lm.t('filter_all')),
+                        _buildFilterChip('all', lm.t('filter_all'), _allBookings.length),
                         const SizedBox(width: 8),
-                        _buildFilterChip('pending', lm.t('filter_pending')),
+                        _buildFilterChip('pending', lm.t('filter_pending'), pendingCount),
                         const SizedBox(width: 8),
-                        _buildFilterChip('active', lm.t('filter_active')),
+                        _buildFilterChip('active', lm.t('filter_active'), activeCount),
                         const SizedBox(width: 8),
-                        _buildFilterChip('completed', lm.t('filter_completed')),
+                        _buildFilterChip('completed', lm.t('filter_completed'), completedCount),
                       ],
                     ),
                   ),
                 ],
               ),
             ),
+
+            // Banner Khusus Jika Ada Peminjaman Menunggu Persetujuan (ACC - Anti-Overflow)
+            if (pendingCount > 0 && _selectedFilterKey != 'pending')
+              Container(
+                margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFF59E0B)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.pending_actions_rounded, color: Color(0xFFD97706), size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Ada $pendingCount pengajuan menunggu persetujuan (ACC).',
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF92400E),
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    InkWell(
+                      onTap: () {
+                        setState(() {
+                          _selectedFilterKey = 'pending';
+                          _applyFilter();
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD97706),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          'ACC',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
             // List Content
             Expanded(
@@ -271,7 +357,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildFilterChip(String key, String title) {
+  Widget _buildFilterChip(String key, String title, int count) {
     bool isSelected = _selectedFilterKey == key;
     return GestureDetector(
       onTap: () {
@@ -281,19 +367,42 @@ class _HistoryScreenState extends State<HistoryScreen> {
         });
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
         decoration: BoxDecoration(
           color: isSelected ? const Color(0xFF0F3567) : const Color(0xFFEDEEEF),
           borderRadius: BorderRadius.circular(20),
         ),
-        child: Text(
-          title,
-          style: TextStyle(
-            fontFamily: 'Inter',
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-            color: isSelected ? Colors.white : const Color(0xFF5C403D),
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                fontFamily: 'Inter',
+                fontSize: 11.5,
+                fontWeight: FontWeight.bold,
+                color: isSelected ? Colors.white : const Color(0xFF5C403D),
+              ),
+            ),
+            const SizedBox(width: 5),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? Colors.white.withValues(alpha: 0.25)
+                    : Colors.white,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                count.toString(),
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: isSelected ? Colors.white : const Color(0xFF0F3567),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

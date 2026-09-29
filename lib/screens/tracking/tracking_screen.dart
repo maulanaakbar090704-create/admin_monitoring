@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -7,6 +8,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../common/custom_bottom_nav.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../../utils/language_manager.dart';
+import '../../utils/direction_helper.dart';
+import '../../utils/security_manager.dart';
 import 'tracking_map_page.dart';
 
 class TrackingScreen extends StatefulWidget {
@@ -33,7 +36,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
   // Nilai Telemetri (Default 0 km/h & 0 km jika database masih kosong)
   double _currentSpeed = 0.0;
   double _currentDistance = 0.0;
-  final double _maxSpeed = 60.0;
+  double _currentHeading = 0.0;
+  final Map<String, LatLng> _previousLocations = {};
+  final Map<String, double> _vehicleHeadings = {};
 
   @override
   void initState() {
@@ -74,31 +79,74 @@ class _TrackingScreenState extends State<TrackingScreen> {
     }
 
     try {
-      // 1. Ambil data peminjaman yang berstatus active dari tabel bookings
-      final response = await supabase
-          .from('bookings')
-          .select('*')
-          .eq('status', 'active')
-          .order('start_at', ascending: false);
+      final user = supabase.auth.currentUser;
+      if (user == null) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
 
-      List<Map<String, dynamic>> bookingsData =
-          List<Map<String, dynamic>>.from(response);
+      // 1. Ambil data kendaraan yang dipegang oleh admin yang sedang login
+      var myVehiclesResponse = await supabase
+          .from('vehicles')
+          .select('id, make_model, registration_no, admin_id')
+          .eq('admin_id', user.id);
+      List<Map<String, dynamic>> myVehicles =
+          List<Map<String, dynamic>>.from(myVehiclesResponse);
 
-      // 2. Ambil metadata profil driver / peminjam
+      // Fallback jika admin belum ditugaskan kendaraan khusus
+      if (myVehicles.isEmpty) {
+        final allVehiclesRes = await supabase.from('vehicles').select('id, make_model, registration_no, admin_id');
+        myVehicles = List<Map<String, dynamic>>.from(allVehiclesRes);
+      }
+
+      final List<String> myVehicleIds = myVehicles
+          .map((v) => v['id']?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toList();
+      final List<String> myPlates = myVehicles
+          .map((v) => (v['registration_no'] ?? '').toString().trim().toUpperCase())
+          .where((p) => p.isNotEmpty)
+          .toList();
+
+      // 2. Ambil data peminjaman berstatus active khusus kendaraan pegangan admin ini
+      List<Map<String, dynamic>> bookingsData = [];
+      try {
+        final response = await supabase
+            .from('bookings')
+            .select('*, vehicles!inner(make_model, registration_no, admin_id)')
+            .eq('vehicles.admin_id', user.id)
+            .eq('status', 'active');
+        bookingsData = List<Map<String, dynamic>>.from(response);
+      } catch (innerErr) {
+        debugPrint('Fallback bookings query: $innerErr');
+        final response = await supabase
+            .from('bookings')
+            .select('*')
+            .eq('status', 'active');
+        final allActive = List<Map<String, dynamic>>.from(response);
+        bookingsData = allActive.where((b) {
+          final vId = b['vehicle_id']?.toString();
+          final plat = (b['plat_nomor'] ?? '').toString().trim().toUpperCase();
+          return (vId != null && myVehicleIds.contains(vId)) ||
+                 (plat.isNotEmpty && myPlates.contains(plat));
+        }).toList();
+      }
+
+      // 3. Ambil metadata profil driver / peminjam
       final profilesResponse = await supabase
           .from('profiles')
           .select('id, full_name, employee_no');
       List<Map<String, dynamic>> profilesData =
           List<Map<String, dynamic>>.from(profilesResponse);
 
-      // 3. Ambil metadata kendaraan
+      // 4. Ambil metadata kendaraan
       final vehiclesResponse = await supabase
           .from('vehicles')
           .select('id, make_model, registration_no');
       List<Map<String, dynamic>> vehiclesData =
           List<Map<String, dynamic>>.from(vehiclesResponse);
 
-      // 4. Hubungkan data peminjaman dengan profil peminjam & kendaraan
+      // 5. Hubungkan data peminjaman dengan profil peminjam & kendaraan
       for (var i = 0; i < bookingsData.length; i++) {
         final employeeId = bookingsData[i]['employee_id'];
         final matchedProfile =
@@ -115,12 +163,15 @@ class _TrackingScreenState extends State<TrackingScreen> {
         final matchedVehicle =
             vehiclesData.where((v) => v['id'] == vehicleId).toList();
         final platFromBooking = bookingsData[i]['plat_nomor'];
+        final existingVehicle = (bookingsData[i]['vehicles'] is Map)
+            ? bookingsData[i]['vehicles'] as Map<String, dynamic>
+            : null;
         bookingsData[i]['vehicles'] = matchedVehicle.isNotEmpty
             ? matchedVehicle.first
-            : {
+            : (existingVehicle ?? {
                 'make_model': 'Mobil Operasional',
-                'registration_no': platFromBooking ?? 'B 1974 HZU',
-              };
+                'registration_no': platFromBooking ?? (myPlates.isNotEmpty ? myPlates.first : 'B 1005 HZV'),
+              });
       }
 
       // Pastikan 1 Plat Nomor hanya dibaca oleh 1 peminjam aktif (tidak boleh ada plat ganda)
@@ -152,6 +203,37 @@ class _TrackingScreenState extends State<TrackingScreen> {
       }
       bookingsData = uniqueBookings;
 
+      // Hitung arah kendaraan (bearing) & validasi keamanan koordinat dari Supabase
+      for (final booking in bookingsData) {
+        final bId = booking['id']?.toString() ?? '';
+        final rawLat = booking['latitude'];
+        final rawLng = booking['longitude'];
+        final double? rawLatNum = (rawLat as num?)?.toDouble();
+        final double? rawLngNum = (rawLng as num?)?.toDouble();
+
+        // Validasi keamanan batas wilayah dan keaslian koordinat
+        final bool isGpsValid = SecurityManager.instance.isValidCoordinate(rawLatNum, rawLngNum);
+        booking['is_gps_valid'] = isGpsValid;
+
+        double heading = _vehicleHeadings[bId] ?? 0.0;
+        final dbHeading = (booking['heading'] ?? booking['bearing'] ?? booking['arah'] as num?)?.toDouble();
+        if (dbHeading != null) {
+          heading = DirectionHelper.normalizeDegrees(dbHeading);
+        } else if (isGpsValid && rawLatNum != null && rawLngNum != null) {
+          final newCoord = LatLng(rawLatNum, rawLngNum);
+          final prev = _previousLocations[bId];
+          if (prev != null && (prev.latitude != newCoord.latitude || prev.longitude != newCoord.longitude)) {
+            final double dist = const Distance()(prev, newCoord);
+            if (dist > 1.5) {
+              heading = DirectionHelper.calculateBearing(prev, newCoord);
+            }
+          }
+          _previousLocations[bId] = newCoord;
+        }
+        _vehicleHeadings[bId] = heading;
+        booking['heading'] = heading;
+      }
+
       if (mounted) {
         // Tentukan selected booking
         Map<String, dynamic>? selected;
@@ -163,12 +245,15 @@ class _TrackingScreenState extends State<TrackingScreen> {
           );
         }
 
-        // Ambil kecepatan & jarak (default 0 jika null)
+        // Ambil kecepatan, jarak & arah (default 0 jika null)
         double speed = 0.0;
         double distance = 0.0;
+        double heading = 0.0;
         if (selected != null) {
+          final sId = selected['id']?.toString() ?? '';
           speed = (selected['kecepatan'] as num?)?.toDouble() ?? 0.0;
           distance = (selected['jarak'] as num?)?.toDouble() ?? 0.0;
+          heading = _vehicleHeadings[sId] ?? (selected['heading'] as num?)?.toDouble() ?? 0.0;
         }
 
         setState(() {
@@ -176,6 +261,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
           _selectedBooking = selected;
           _currentSpeed = speed;
           _currentDistance = distance;
+          _currentHeading = heading;
           _isLoading = false;
         });
 
@@ -215,11 +301,13 @@ class _TrackingScreenState extends State<TrackingScreen> {
     final lng = (booking['longitude'] as num?)?.toDouble();
     final speed = (booking['kecepatan'] as num?)?.toDouble() ?? 0.0;
     final distance = (booking['jarak'] as num?)?.toDouble() ?? 0.0;
+    final heading = (booking['heading'] as num?)?.toDouble() ?? 0.0;
 
     setState(() {
       _selectedBooking = booking;
       _currentSpeed = speed;
       _currentDistance = distance;
+      _currentHeading = heading;
     });
 
     if (lat != null && lng != null && _isMapReady) {
@@ -558,13 +646,14 @@ class _TrackingScreenState extends State<TrackingScreen> {
                                   b['vehicles']?['registration_no'] ??
                                   '-';
                               final isCurrent = _selectedBooking?['id'] == b['id'];
+                              final heading = (b['heading'] as num?)?.toDouble() ?? 0.0;
                               return Marker(
                                 point: LatLng(lat, lng),
-                                width: 80,
-                                height: 80,
+                                width: 84,
+                                height: 84,
                                 builder: (context) => GestureDetector(
                                   onTap: () => _focusVehicle(b),
-                                  child: _buildMapCarMarker(pNomor, isSelected: isCurrent),
+                                  child: _buildMapCarMarker(pNomor, isSelected: isCurrent, heading: heading),
                                 ),
                               );
                             })
@@ -589,58 +678,65 @@ class _TrackingScreenState extends State<TrackingScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         // Badge Status Peta
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF0F172A).withValues(alpha: 0.88),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: hasActiveVehicle
-                                  ? const Color(0xFF10B981).withValues(alpha: 0.7)
-                                  : const Color(0xFF64748B).withValues(alpha: 0.5),
+                        Flexible(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
                             ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.2),
-                                blurRadius: 6,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0F172A).withValues(alpha: 0.88),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: hasActiveVehicle
+                                    ? const Color(0xFF10B981).withValues(alpha: 0.7)
+                                    : const Color(0xFF64748B).withValues(alpha: 0.5),
                               ),
-                            ],
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                width: 8,
-                                height: 8,
-                                decoration: BoxDecoration(
-                                  color: hasActiveVehicle
-                                      ? const Color(0xFF10B981)
-                                      : const Color(0xFF94A3B8),
-                                  shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.2),
+                                  blurRadius: 6,
                                 ),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                hasActiveVehicle
-                                    ? (hasActiveCoord
-                                        ? '$platNomor • ${LanguageManager.instance.t('map_live_gps')}'
-                                        : '$platNomor • ${LanguageManager.instance.t('map_gps_standby')}')
-                                    : LanguageManager.instance.t('map_pool_standby'),
-                                style: TextStyle(
-                                  color: hasActiveVehicle
-                                      ? const Color(0xFFFEF3C7)
-                                      : Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 0.4,
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: hasActiveVehicle
+                                        ? const Color(0xFF10B981)
+                                        : const Color(0xFF94A3B8),
+                                    shape: BoxShape.circle,
+                                  ),
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    hasActiveVehicle
+                                        ? (hasActiveCoord
+                                            ? '$platNomor • ${LanguageManager.instance.t('map_live_gps')}'
+                                            : '$platNomor • ${LanguageManager.instance.t('map_gps_standby')}')
+                                        : LanguageManager.instance.t('map_pool_standby'),
+                                    style: TextStyle(
+                                      color: hasActiveVehicle
+                                          ? const Color(0xFFFEF3C7)
+                                          : Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 0.4,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
+                        const SizedBox(width: 8),
 
                         // Tombol Fullscreen Map
                         if (hasActiveVehicle)
@@ -1015,7 +1111,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
   }
 
   // Marker Ikon Mobil untuk Peta
-  Widget _buildMapCarMarker(String platNomor, {bool isSelected = true}) {
+  // Marker Ikon Mobil untuk Peta dengan Orientasi Arah Kendaraan
+  Widget _buildMapCarMarker(String platNomor, {bool isSelected = true, double heading = 0.0}) {
+    final cardinalAbbr = DirectionHelper.getCardinalAbbreviation(heading);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1033,35 +1131,49 @@ class _TrackingScreenState extends State<TrackingScreen> {
             ],
           ),
           child: Text(
-            platNomor,
+            '$platNomor • $cardinalAbbr',
             style: const TextStyle(
               color: Color(0xFFFEF3C7),
-              fontSize: 8.5,
+              fontSize: 8.0,
               fontWeight: FontWeight.bold,
             ),
           ),
         ),
         const SizedBox(height: 2),
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFFBB0016) : const Color(0xFF0F3567),
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 2),
-            boxShadow: [
-              BoxShadow(
-                color: (isSelected ? const Color(0xFFBB0016) : const Color(0xFF0F3567)).withValues(alpha: 0.4),
-                blurRadius: 8,
-                spreadRadius: 2,
-              ),
-            ],
-          ),
-          child: const Center(
-            child: Icon(
-              Icons.directions_car_rounded,
-              color: Colors.white,
-              size: 20,
+        Transform.rotate(
+          angle: heading * (math.pi / 180.0),
+          child: Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: isSelected ? const Color(0xFFBB0016) : const Color(0xFF0F3567),
+              shape: BoxShape.circle,
+              border: Border.all(color: isSelected ? const Color(0xFFF59E0B) : Colors.white, width: 2),
+              boxShadow: [
+                BoxShadow(
+                  color: (isSelected ? const Color(0xFFBB0016) : const Color(0xFF0F3567)).withValues(alpha: 0.4),
+                  blurRadius: 8,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Positioned(
+                  top: 2,
+                  child: Icon(
+                    Icons.arrow_drop_up_rounded,
+                    color: isSelected ? const Color(0xFFFEF3C7) : Colors.white,
+                    size: 14,
+                  ),
+                ),
+                const Icon(
+                  Icons.navigation_rounded,
+                  color: Colors.white,
+                  size: 18,
+                ),
+              ],
             ),
           ),
         ),
@@ -1139,7 +1251,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     vertical: 10,
-                    horizontal: 8,
+                    horizontal: 4,
                   ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFF8FAFC),
@@ -1148,35 +1260,43 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   ),
                   child: Column(
                     children: [
-                      Text(
-                        LanguageManager.instance.t('stat_active_fleet'),
-                        style: const TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF64748B),
-                          letterSpacing: 0.3,
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          LanguageManager.instance.t('stat_active_fleet'),
+                          style: const TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF64748B),
+                            letterSpacing: 0.3,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        '${_activeBookings.length} ${LanguageManager.instance.t('unit_suffix')}',
-                        style: const TextStyle(
-                          fontFamily: 'Hanken Grotesk',
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF0F3567),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          '${_activeBookings.length} ${LanguageManager.instance.t('unit_suffix')}',
+                          style: const TextStyle(
+                            fontFamily: 'Hanken Grotesk',
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF0F3567),
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Expanded(
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     vertical: 10,
-                    horizontal: 8,
+                    horizontal: 4,
                   ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFF8FAFC),
@@ -1185,35 +1305,43 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   ),
                   child: Column(
                     children: [
-                      Text(
-                        LanguageManager.instance.t('stat_avg_speed'),
-                        style: const TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF64748B),
-                          letterSpacing: 0.3,
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          LanguageManager.instance.t('speed_label'),
+                          style: const TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF64748B),
+                            letterSpacing: 0.3,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        '${_currentSpeed.toStringAsFixed(1)} km/h',
-                        style: const TextStyle(
-                          fontFamily: 'Hanken Grotesk',
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFFD97706),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          '${_currentSpeed.toStringAsFixed(1)} km/h',
+                          style: const TextStyle(
+                            fontFamily: 'Hanken Grotesk',
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFFD97706),
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Expanded(
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     vertical: 10,
-                    horizontal: 8,
+                    horizontal: 4,
                   ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFF8FAFC),
@@ -1222,23 +1350,90 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   ),
                   child: Column(
                     children: [
-                      Text(
-                        LanguageManager.instance.t('stat_max_speed'),
-                        style: const TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF64748B),
-                          letterSpacing: 0.3,
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          LanguageManager.instance.t('heading_label'),
+                          style: const TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF64748B),
+                            letterSpacing: 0.3,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        '${_maxSpeed.toStringAsFixed(0)} km/h',
-                        style: const TextStyle(
-                          fontFamily: 'Hanken Grotesk',
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFFBB0016),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Transform.rotate(
+                              angle: _currentHeading * (math.pi / 180.0),
+                              child: const Icon(
+                                Icons.navigation_rounded,
+                                size: 13,
+                                color: Color(0xFF0F3567),
+                              ),
+                            ),
+                            const SizedBox(width: 3),
+                            Text(
+                              '${DirectionHelper.getCardinalAbbreviation(_currentHeading)} ${_currentHeading.round()}°',
+                              style: const TextStyle(
+                                fontFamily: 'Hanken Grotesk',
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF0F3567),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 10,
+                    horizontal: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Column(
+                    children: [
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          LanguageManager.instance.t('distance_label'),
+                          style: const TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF64748B),
+                            letterSpacing: 0.3,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          '${_currentDistance.toStringAsFixed(1)} km',
+                          style: const TextStyle(
+                            fontFamily: 'Hanken Grotesk',
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFFBB0016),
+                          ),
                         ),
                       ),
                     ],
@@ -1543,8 +1738,11 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
                 const SizedBox(height: 10),
 
-                // Telemetry Badges
-                Row(
+                // Telemetry Badges (Kecepatan, Jarak, Arah Kendaraan) - Responsive Wrap
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1554,6 +1752,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                         border: Border.all(color: const Color(0xFFE2E8F0)),
                       ),
                       child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           const Icon(Icons.speed_rounded, size: 13, color: Color(0xFFD97706)),
                           const SizedBox(width: 4),
@@ -1568,7 +1767,6 @@ class _TrackingScreenState extends State<TrackingScreen> {
                         ],
                       ),
                     ),
-                    const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
@@ -1577,6 +1775,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                         border: Border.all(color: const Color(0xFFE2E8F0)),
                       ),
                       child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           const Icon(Icons.route_rounded, size: 13, color: Color(0xFF0F3567)),
                           const SizedBox(width: 4),
@@ -1591,30 +1790,106 @@ class _TrackingScreenState extends State<TrackingScreen> {
                         ],
                       ),
                     ),
+                    Builder(
+                      builder: (context) {
+                        final double heading = (booking['heading'] as num?)?.toDouble() ?? 0.0;
+                        final String headingAbbr = DirectionHelper.getCardinalAbbreviation(heading);
+
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Transform.rotate(
+                                angle: heading * (math.pi / 180.0),
+                                child: const Icon(
+                                  Icons.navigation_rounded,
+                                  size: 12,
+                                  color: Color(0xFFBB0016),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '$headingAbbr ${heading.round()}°',
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF0F172A),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                    Builder(
+                      builder: (context) {
+                        final bool isGpsValid = booking['is_gps_valid'] == true;
+
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: isGpsValid ? const Color(0xFFF0FDF4) : const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: isGpsValid ? const Color(0xFFBBF7D0) : const Color(0xFFE2E8F0),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isGpsValid ? Icons.verified_user_rounded : Icons.shield_outlined,
+                                size: 11,
+                                color: isGpsValid ? const Color(0xFF16A34A) : const Color(0xFF94A3B8),
+                              ),
+                              const SizedBox(width: 3),
+                              Text(
+                                isGpsValid ? 'Valid' : 'Standby',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: isGpsValid ? const Color(0xFF15803D) : const Color(0xFF64748B),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
                   ],
                 ),
 
                 const SizedBox(height: 12),
 
-                // Action Buttons: Fokus Peta & Peta Penuh
+                // Action Buttons: Fokus Peta & Peta Penuh - Responsive scale
                 Row(
                   children: [
                     Expanded(
                       child: OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
                           foregroundColor: const Color(0xFF0F3567),
                           side: const BorderSide(color: Color(0xFF0F3567)),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
+                          visualDensity: VisualDensity.compact,
                         ),
                         icon: const Icon(Icons.my_location_rounded, size: 15),
-                        label: Text(
-                          LanguageManager.instance.t('focus_map_btn'),
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
+                        label: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            LanguageManager.instance.t('focus_map_btn'),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                         onPressed: () => _focusVehicle(booking),
@@ -1626,18 +1901,22 @@ class _TrackingScreenState extends State<TrackingScreen> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF0F3567),
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
                           elevation: 0,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
+                          visualDensity: VisualDensity.compact,
                         ),
                         icon: const Icon(Icons.fullscreen_rounded, size: 16),
-                        label: Text(
-                          LanguageManager.instance.t('fullscreen_map_btn'),
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
+                        label: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            LanguageManager.instance.t('fullscreen_map_btn'),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                         onPressed: () {

@@ -46,7 +46,12 @@ class _HistoryDetailSheetState extends State<HistoryDetailSheet> {
           children: [
             Icon(Icons.check_circle, color: Color(0xFF2E7D32)),
             SizedBox(width: 8),
-            Text('Setujui Peminjaman', style: TextStyle(fontFamily: 'Hanken Grotesk', fontSize: 18, fontWeight: FontWeight.bold)),
+            Expanded(
+              child: Text(
+                'Setujui Peminjaman',
+                style: TextStyle(fontFamily: 'Hanken Grotesk', fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
           ],
         ),
         content: Text(
@@ -335,7 +340,10 @@ class _HistoryDetailSheetState extends State<HistoryDetailSheet> {
                           ),
                           onPressed: _approveBooking,
                           icon: const Icon(Icons.check_circle_outline),
-                          label: Text(LanguageManager.instance.t('btn_approve_full'), style: const TextStyle(fontWeight: FontWeight.bold)),
+                          label: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(LanguageManager.instance.t('btn_approve_full'), style: const TextStyle(fontWeight: FontWeight.bold)),
+                          ),
                         ),
                       ),
               ),
@@ -350,13 +358,17 @@ class _HistoryDetailSheetState extends State<HistoryDetailSheet> {
       children: [
         Icon(icon, size: 16, color: const Color(0xFFBB0016)),
         const SizedBox(width: 6),
-        Text(
-          title,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 0.5,
-            color: Color(0xFFBB0016),
+        Flexible(
+          child: Text(
+            title,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5,
+              color: Color(0xFFBB0016),
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ),
       ],

@@ -7,32 +7,25 @@ class LoginHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Logo Telkom Akses dalam Card Putih Bersih
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.15),
-                blurRadius: 16,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Image.asset(
-            'assets/images/telkom_akses_logo.png',
-            height: 44,
-            fit: BoxFit.contain,
-            errorBuilder: (context, error, stackTrace) {
-              return const Icon(
-                Icons.business_rounded,
-                size: 44,
-                color: Color(0xFFBB0016),
-              );
-            },
-          ),
+        // Logo Telkom Akses tanpa background putih
+        Image.asset(
+          'assets/images/telkom_akses_logo_white.png',
+          height: 52,
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) {
+            return Image.asset(
+              'assets/images/telkom_akses_logo.png',
+              height: 52,
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) {
+                return const Icon(
+                  Icons.business_rounded,
+                  size: 48,
+                  color: Colors.white,
+                );
+              },
+            );
+          },
         ),
         const SizedBox(height: 20),
         const Text(

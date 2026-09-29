@@ -384,10 +384,14 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                 ),
               ),
               const SizedBox(height: 2),
-              Text(
-                subtitle,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 10, color: Colors.grey),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  subtitle,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 10, color: Colors.grey),
+                  maxLines: 1,
+                ),
               ),
             ],
           ),
@@ -613,7 +617,10 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                     elevation: 0,
                   ),
                   onPressed: _showCreateTicketSheet,
-                  child: const Text('Buat Tiket', style: TextStyle(fontSize: 12)),
+                  child: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text('Buat Tiket', style: TextStyle(fontSize: 12)),
+                  ),
                 ),
               ],
             ),

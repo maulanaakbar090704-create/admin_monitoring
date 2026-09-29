@@ -428,22 +428,24 @@ class AboutAppScreen extends StatelessWidget {
                       child: const Icon(Icons.person, color: Color(0xFF0F3567), size: 20),
                     ),
                     const SizedBox(width: 12),
-                    const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Maulana Akbar',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                            color: Color(0xFF191C1D),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Maulana Akbar',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                              color: Color(0xFF191C1D),
+                            ),
                           ),
-                        ),
-                        Text(
-                          'Admin Magang - SV Universitas Pakuan',
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
-                      ],
+                          Text(
+                            'Admin Magang - SV Universitas Pakuan',
+                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
